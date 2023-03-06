@@ -105,6 +105,7 @@ void build_(vector<Point>& points){
 
 /*!
  * stack实现kd树
+ * 注意对比stack和递归的联系:subtree的成员是递归函数的参数. 
  */
 struct subTree {
     int nodeIdx{0};
