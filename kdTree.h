@@ -5,7 +5,7 @@ namespace KD{
         public:
             struct Node
             {
-                Node() : idx(-1), left(-1), right(-1), boundary(-1.f) {}
+                Node() : idx(-1), left(-1), right(-1), boundary(0.f) {}
                 Node(int _idx, int _left, int _right, float _boundary)
                 : idx(_idx), left(_left), right(_right), boundary(_boundary) {}
 
@@ -31,10 +31,10 @@ namespace KD{
             bool copyAndReorderPoints = false);
             //! finds the K nearest neighbors of "vec" while looking at Emax (at most) leaves
             CV_WRAP int findNearest(cv::InputArray vec, int K, int Emax,
-            cv::OutputArray neighborsIdx,
-            cv::InputArray neighbors = cv::noArray(),
-            cv::InputArray dist = cv::noArray(),
-            cv::InputArray labels = cv::noArray()) const;
+            cv::OutputArray neighborsIdx = cv::noArray(),
+            cv::OutputArray neighbors = cv::noArray(),
+            cv::OutputArray dist = cv::noArray(),
+            cv::OutputArray labels = cv::noArray()) const;
             //! finds all the points from the initial set that belong to the specified box
             CV_WRAP void findOrthoRange(cv::InputArray minBounds,
             cv::InputArray maxBounds,
@@ -42,8 +42,8 @@ namespace KD{
             cv::InputArray neighbors = cv::noArray(),
             cv::InputArray labels = cv::noArray()) const;
             //! returns vectors with the specified indices
-            CV_WRAP void getPoints(cv::InputArray idx, cv::InputArray pts,
-            cv::InputArray labels = cv::noArray()) const;
+            CV_WRAP void getPoints(cv::InputArray idx, cv::OutputArray pts,
+            cv::OutputArray labels = cv::noArray()) const;
             //! return a vector with the specified index
             const float* getPoint(int ptidx, int* label = 0) const;
             //! returns the search space dimensionality
@@ -54,5 +54,5 @@ namespace KD{
             CV_PROP std::vector<int> labels; //!< the parallel array of labels.
             CV_PROP int maxDepth; //!< maximum depth of the search tree. Do not modify it
             CV_PROP_RW int normType; //!< type of the distance (cv::NORM_L1 or cv::NORM_L2) used for search. Initially set to cv::NORM_L2, but you can modify it
-        };
+    };
 }
