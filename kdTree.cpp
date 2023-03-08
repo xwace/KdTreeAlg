@@ -215,4 +215,234 @@ namespace KD{
             cout<<"tree node: "<<node.boundary<<" "<<node.left<<" "<<node.right<<endl;
         }
     }
+    
+    
+    
+    
+     struct PQueueElem
+    {
+        PQueueElem() : dist(0), idx(0) {}
+        PQueueElem(float _dist, int _idx) : dist(_dist), idx(_idx) {}
+        float dist;
+        int idx;
+    };
+
+    int KDTree::findNearest(InputArray _vec, int K, int emax,
+                            OutputArray _neighborsIdx, OutputArray _neighbors,
+                            OutputArray _dist, OutputArray _labels) const
+
+    {
+        Mat vecmat = _vec.getMat();
+        CV_Assert( vecmat.isContinuous() && vecmat.type() == CV_32F && vecmat.total() == (size_t)points.cols );
+        const float* vec = vecmat.ptr<float>();
+        K = std::min(K, points.rows);
+        int ptdims = points.cols;
+
+        CV_Assert(K > 0 && (normType == NORM_L2 || normType == NORM_L1));
+
+        AutoBuffer<uchar> _buf((K+1)*(sizeof(float) + sizeof(int)));
+        int* idx = (int*)_buf.data();
+        float* dist = (float*)(idx + K + 1);
+        //ncount统计找到的近邻点数目
+        int i, j, ncount = 0, e = 0;
+
+        int qsize = 0, maxqsize = 1 << 10;
+        AutoBuffer<uchar> _pqueue(maxqsize*sizeof(PQueueElem));
+        PQueueElem* pqueue = (PQueueElem*)_pqueue.data();
+
+        //emax代表搜索叶子数;是一个经验值,限制搜索次数,可避免一直回溯到根节点
+        emax = std::max(emax, 1);
+
+        for( e = 0; e < emax; )
+        {
+            float d, alt_d = 0.f;
+            //nidx代表子树的序号
+            int nidx;
+
+            if( e == 0 )
+                nidx = 0;
+            else
+            {
+                // take the next node from the priority queue
+                if( qsize == 0 )
+                    break;
+
+                //nidx代表子树的序号
+                //弹出回溯点优先队列最小距离的点
+                nidx = pqueue[0].idx;
+                alt_d = pqueue[0].dist;
+
+                //优先队列更新top位(2->3),pro:2,3,10,6->post:3,6,10,2
+                if( --qsize > 0 )
+                {
+                    std::swap(pqueue[0], pqueue[qsize]);
+                    d = pqueue[0].dist;
+                    for( i = 0;;)
+                    {
+                        int left = i*2 + 1, right = i*2 + 2;
+                        if( left >= qsize )
+                            break;
+                        if( right < qsize && pqueue[right].dist < pqueue[left].dist )
+                            left = right;
+                        if( pqueue[left].dist >= d )
+                            break;
+                        std::swap(pqueue[i], pqueue[left]);
+                        i = left;
+                    }
+                }
+
+                // [回溯点的距离]> max[K近邻点集的距离],跳过该次回溯
+                if( ncount == K && alt_d > dist[ncount-1] )
+                    continue;
+            }
+
+            for(;;)
+            {
+                if( nidx < 0 )//叶子节点跳出循环;结束一次搜索
+                    break;
+
+                //根节点或者回溯点开始搜索,直到遇到叶子节点为一次完整的搜索
+                const Node& n = nodes[nidx];
+
+                //取到叶子节点
+                if( n.idx < 0 )
+                {
+                    i = ~n.idx;//叶子节点对应点的真实索引;负号为了区分叶子节点与其他节点
+                    const float* row = points.ptr<float>(i);
+                    if( normType == NORM_L2 )
+                        for( j = 0, d = 0.f; j < ptdims; j++ )
+                        {
+                            float t = vec[j] - row[j];
+                            d += t*t;
+                        }
+                    else
+                        for( j = 0, d = 0.f; j < ptdims; j++ )
+                            d += std::abs(vec[j] - row[j]);
+
+                    dist[ncount] = d;//!!!output 近邻点距离
+                    idx[ncount] = i;//!!!output 近邻点索引
+
+                    //升序排序 (dist0,idx0) < (dist1,idx1)
+                    for( i = ncount-1; i >= 0; i-- )
+                    {
+                        if( dist[i] <= d )
+                            break;
+                        //上浮最小值 pair<idx,dist>
+                        std::swap(dist[i], dist[i+1]);
+                        std::swap(idx[i], idx[i+1]);
+                    }
+                    ncount += ncount < K;//k近邻还没到找足够数量,继续进队列
+                    e++;
+                    break;
+                }
+
+                //下面这段代码决定搜索方向;nidx避免了重新计算下一节点的位置
+                int alt;
+                if( vec[n.idx] <= n.boundary )//vec是目标点
+                {
+                    nidx = n.left;
+                    alt = n.right;
+                }
+                else
+                {
+                    nidx = n.right;
+                    alt = n.left;
+                }
+
+                d = vec[n.idx] - n.boundary;
+                if( normType == NORM_L2 )
+                    d = d*d + alt_d;
+                else
+                    d = std::abs(d) + alt_d;
+
+                // subtree prunning 实现剪枝
+                //已找到K近邻的前提,距离大的回溯节点跳过
+                if( ncount == K && d > dist[ncount-1] )//dist是存放近邻点集的距离
+                    continue;
+
+                // add alternative subtree to the priority queue
+                //添加兄弟子树到优先队列;升序
+                pqueue[qsize] = PQueueElem(d, alt);
+                for( i = qsize; i > 0; )
+                {
+                    int parent = (i-1)/2;
+                    if( parent < 0 || pqueue[parent].dist <= d )
+                        break;
+                    std::swap(pqueue[i], pqueue[parent]);
+                    i = parent;
+                }
+                qsize += qsize+1 < maxqsize;
+            }
+        }
+
+        Mat neibours = Mat(K, 1, CV_32S, idx);
+        cout<<"neighbours: \n"<<neibours<<endl;
+
+        K = std::min(K, ncount);
+        if( _neighborsIdx.needed() )
+        {
+            _neighborsIdx.create(K, 1, CV_32S, -1, true);
+            Mat nidx = _neighborsIdx.getMat();
+            Mat(nidx.size(), CV_32S, &idx[0]).copyTo(nidx);
+        }
+        if( _dist.needed() )
+            sqrt(Mat(K, 1, CV_32F, dist), _dist);
+
+        if( _neighbors.needed() || _labels.needed() )
+            getPoints(Mat(K, 1, CV_32S, idx), _neighbors, _labels);
+        return K;
+    }
+
+    void KDTree::getPoints(InputArray _idx, OutputArray _pts, OutputArray _labels) const
+    {
+        Mat idxmat = _idx.getMat(), pts, labelsmat;
+        CV_Assert( idxmat.isContinuous() && idxmat.type() == CV_32S &&
+                   (idxmat.cols == 1 || idxmat.rows == 1) );
+        const int* idx = idxmat.ptr<int>();
+        int* dstlabels = 0;
+
+        int ptdims = points.cols;
+        int i, nidx = (int)idxmat.total();
+        if( nidx == 0 )
+        {
+            _pts.release();
+            _labels.release();
+            return;
+        }
+
+        if( _pts.needed() )
+        {
+            _pts.create( nidx, ptdims, points.type());
+            pts = _pts.getMat();
+        }
+
+        if(_labels.needed())
+        {
+            _labels.create(nidx, 1, CV_32S, -1, true);
+            labelsmat = _labels.getMat();
+            CV_Assert( labelsmat.isContinuous() );
+            dstlabels = labelsmat.ptr<int>();
+        }
+        const int* srclabels = !labels.empty() ? &labels[0] : 0;
+
+        for( i = 0; i < nidx; i++ )
+        {
+            int k = idx[i];
+            CV_Assert( (unsigned)k < (unsigned)points.rows );
+            const float* src = points.ptr<float>(k);
+            if( !pts.empty() )
+                std::copy(src, src + ptdims, pts.ptr<float>(i));
+            if( dstlabels )
+                dstlabels[i] = srclabels ? srclabels[k] : k;
+        }
+    }
+
+
+    const float* KDTree::getPoint(int ptidx, int* label) const
+    {
+        CV_Assert( (unsigned)ptidx < (unsigned)points.rows);
+        if(label)
+            *label = labels[ptidx];
+        return points.ptr<float>(ptidx);
+    }
 }
