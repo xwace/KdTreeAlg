@@ -39,6 +39,13 @@ void makeTree(std::vector<std::pair<Point, int>> &points, int start, int end, in
     makeTree(points, mid+1, end, (level+1)%2);
 }
 
+
+/**
+  ******************************************************************************
+  * @author         : oswin
+  * @brief          : 二叉树的结构存放kd树,一个节点包含左右节点的指针
+  ******************************************************************************
+  */
 //Points [[2,3],[5,4],[9,6],[4,7],[8,1],[7,2]]
 struct KdNode {
     Point idx{};
@@ -104,14 +111,16 @@ void build_(vector<Point>& points){
 }
 
 /*!
- * stack实现kd树
+ * stack实现kd树创建
  * 注意对比stack和递归的联系:subtree的成员是递归函数的参数. 
  */
+
 struct subTree {
     int nodeIdx{0};
     int first{-1};
     int last{-1};
 
+    subTree(){}
     subTree(int first_, int last_,int nodeIdx_) : first(first_), last(last_), nodeIdx(nodeIdx_) {}
 };
 
@@ -123,8 +132,151 @@ bool compY2(const Point& p1, const Point& p2){
     return p1.y < p2.y;
 }
 
+/**
+  ******************************************************************************
+  * @author         : oswin
+  * @brief          : 查找最近邻点算法
+  * @date           : 20230308
+  ******************************************************************************
+  */
+void find_nearest(vector<Point> &points, const Point &pt, subTree &st, Point &nearest, int &min_dist) {
+    if ((st.last - st.first) < 1) {
+        return;
+    }
+
+    int mid = (st.first + st.last) / 2;
+
+    //Should the new distance be shorter, update the nearest point
+    auto dist = cv::norm(pt - points[mid]);
+    if (dist < min_dist) {
+        min_dist = dist;
+        nearest = points[mid];
+    }
+
+    subTree subtree;
+    subTree further_subtree;
+    subTree left;
+    subTree right;
+
+    int delta = st.nodeIdx == 1 ? (pt.x - points[mid].x) : (pt.y - points[mid].y);
+    left = subTree(st.first, mid, -st.nodeIdx);
+    right = subTree(mid + 1, st.last, -st.nodeIdx);
+
+    subtree = delta > 0 ? right : left;
+    further_subtree = delta > 0 ? left : right;//兄弟子树
+
+    find_nearest(points, pt, subtree, nearest, min_dist);
+
+    //发现以目标点为圆心,最短距离为半径的圆包含mid父节点,需回溯继续搜索兄弟子树
+    if (abs(delta) < min_dist) {
+        find_nearest(points, pt, further_subtree, nearest, min_dist);
+    }
+}
+
+/**
+  ******************************************************************************
+  * @author         : oswin
+  * @brief          : 查找K近邻的算法. BBF做了回溯点丢弃的优化:
+  *                   if(ns.size() == K && dist > ns.top().dist) continue;
+  *                   inputs:points, outputs:ns
+  ******************************************************************************
+  */
+struct PQueueElemMax {
+    PQueueElemMax() : dist(0), point(0, 0) {}
+
+    PQueueElemMax(float _dist, Point point_, subTree subtree_) : dist(_dist), point(point_), subtree(subtree_) {}
+
+    friend bool operator<(const PQueueElemMax &left, const PQueueElemMax &right) {
+        return left.dist < right.dist;//采用最大堆
+    }
+
+    float dist;
+    Point point;
+    subTree subtree;
+};
+
+struct PQueueElem {
+    PQueueElem() : dist(0), point(0, 0) {}
+
+    PQueueElem(float _dist, Point point_, subTree subtree_) : dist(_dist), point(point_), subtree(subtree_) {}
+
+    friend bool operator<(const PQueueElem &left, const PQueueElem &right) {
+        return left.dist > right.dist;//采用最小堆
+    }
+
+    float dist;
+    Point point;
+    subTree subtree;
+};
+
+//从根节点或者回溯节点搜索到叶子节点;期间,添加兄弟子树到回溯点优先队列pq;
+void explore_to_leaf(vector<Point> &points, const Point &pt, subTree &st, int &thres_dist, int K,
+                     priority_queue<PQueueElem> &pq,
+                     priority_queue<PQueueElemMax> &ns) {
+
+    if (st.last - st.first < 1) return;
+
+    int mid = (st.first + st.last) / 2;
+
+    auto dist = cv::norm(pt - points[mid]);
+
+    if (ns.size() == K && dist > ns.top().dist) return;//裁剪掉本次回溯
+
+    if (dist < thres_dist) {
+        ns.emplace(dist, points[mid], subTree());
+        if (ns.size() == K + 1)
+            ns.pop();
+    }
+
+    subTree subtree;
+    subTree further_subtree;
+    subTree left;
+    subTree right;
+
+    int delta = st.nodeIdx == 1 ? (pt.x - points[mid].x) : (pt.y - points[mid].y);
+    left = subTree(st.first, mid, -st.nodeIdx);
+    right = subTree(mid + 1, st.last, -st.nodeIdx);
+
+    subtree = delta > 0 ? right : left;
+    further_subtree = delta > 0 ? left : right;//兄弟子树
+
+    explore_to_leaf(points, pt, subtree, thres_dist, K, pq, ns);
+
+    //dist比队列中最长距离短时入队
+    if (ns.size() == K && dist > ns.top().dist) return;
+    pq.emplace(dist, points[mid], further_subtree);
+}
+
+void find_nearest_neighbors(vector<Point> &points, const Point &pt, subTree &st, int &thres_dist, int K,
+                            priority_queue<PQueueElemMax> &ns) {
+
+    subTree initTree(0, (int) points.size(), 1);
+    priority_queue<PQueueElem> pq;
+
+    int mid = (initTree.first + initTree.last) / 2;
+    auto dist = cv::norm(pt - points[mid]);
+    pq.emplace(dist, points[mid], initTree);
+
+    while (!pq.empty()) {
+
+        //start one loop
+        auto tree = pq.top().subtree;
+        pq.pop();
+
+        explore_to_leaf(points, pt, tree, thres_dist, K, pq, ns);
+    }
+
+}
+
+/**
+  ******************************************************************************
+  * @author         : oswin
+  * @brief          : 利用stack生成树,用vector存放,与前面的递归算法做对比
+  ******************************************************************************
+  */
 void createTree(vector<Point> &points) {
-    subTree initTree(0, (int)points.size(),1);//attention: opencv used points.size()-1!!
+    
+    subTree initTree(0, (int) points.size(), 1);//attention: opencv used points.size()-1!!
 
     std::stack<subTree> stack;
     stack.emplace(initTree);
@@ -158,8 +310,44 @@ void createTree(vector<Point> &points) {
         stack.emplace(left);
     }
 
-    cout<<points<<endl;//输出结果
+    cout << "建kd树:\n " << points << endl;//输出结果
+
+    /**
+      ******************************************************************************
+      * @author         : oswin
+      * @brief          : 测试1--求最近邻点的接口
+      ******************************************************************************
+      */
+
+    Point query_pt(2, 4), nearest{-1, -1};
+    int min_dist{INT_MAX};
+    find_nearest(points, query_pt, initTree, nearest, min_dist);
+    cout << "返回最近邻点 nearest: " << nearest << endl;
+    
+
+    /**
+      ******************************************************************************
+      * @author         : oswin
+      * @brief          : 测试2--K近邻调用接口.返回优先队列ns
+      * @date           : K为自定义近邻系数
+      ******************************************************************************
+      */
+    int thres_dist = 4;//自己设置最近邻的阈值, 阈值范围内的是近邻点
+    priority_queue<PQueueElemMax> ns;//结果返回
+    int K = 2;
+    find_nearest_neighbors(points, query_pt, initTree, thres_dist, K, ns);
+    cout << "nbs: size " << ns.top().point << endl;
+    ns.pop();
+    cout << "nbs: size " << ns.top().point << endl;
 }
+
+
+
+
+
+
+
+
 
 int main(){
     vector<Point> pts{{2, 3}, {5, 4}, {9, 6}, {4, 7}, {8, 1}, {7, 2}};
