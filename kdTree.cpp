@@ -272,7 +272,7 @@ namespace KD{
                 nidx = pqueue[0].idx;
                 alt_d = pqueue[0].dist;
 
-                //优先队列更新top位(2->3),pro:2,3,10,6->post:3,6,10,2
+                //优先队列pop()(2->3),pre:2,3,10,6->post:3,6,10,2
                 if( --qsize > 0 )
                 {
                     std::swap(pqueue[0], pqueue[qsize]);
